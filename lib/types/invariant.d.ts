@@ -1,10 +1,10 @@
 /**
  * Package-owned verdict-stream invariant for the model-backed reviewer.
- * @module @deepseek-ai/dsh-review-approval/invariant
+ * @module deepseek-autoreview/invariant
  */
 import type { Context } from '@deepseek-ai/cordis';
 /** Cordis companion plugin name. */
-export declare const name = "review-approval-invariant";
+export declare const name = "autoreview-invariant";
 /** Service required before the companion can reserve package ownership. */
 export declare const inject: string[];
 /**

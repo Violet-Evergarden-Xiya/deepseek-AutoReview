@@ -1,31 +1,11 @@
-import { defineConfig } from 'tsdown'
+import { clientBundle } from './tsdown.client.ts'
 
 /**
- * Build index and the invariant companion as separate single-entry bundles.
- * Both entries import src/types.ts, so a multi-entry build emits a shared
- * chunk the package's exact `files` whitelist omits; separate builds inline it.
+ * Node half (index + invariant companion) plus the browser client bundle
+ * (the General-settings reviewer-route row).
  */
-export default defineConfig([
-  {
-    entry: ['lib/types/index.js'],
-    outDir: 'lib',
-    format: ['esm'],
-    platform: 'node',
-    target: 'es2024',
-    fixedExtension: false,
-    dts: false,
-    clean: false,
-    deps: { neverBundle: [/^@deepseek-ai\//] },
-  },
-  {
-    entry: ['lib/types/invariant.js'],
-    outDir: 'lib',
-    format: ['esm'],
-    platform: 'node',
-    target: 'es2024',
-    fixedExtension: false,
-    dts: false,
-    clean: false,
-    deps: { neverBundle: [/^@deepseek-ai\//] },
-  },
-])
+export default clientBundle(
+  'deepseek-autoreview',
+  ['lib/types/index.js', 'lib/types/invariant.js'],
+  {},
+)
