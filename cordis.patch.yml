@@ -1,0 +1,41 @@
+# deepseek-autoreview bundle patch: adds the 「替我审核」(review) permission
+# preset and mounts the reviewer answerer row.
+#
+# 1. Overrides the `permission` row's preset table. Patch config overrides
+#    replace the whole key, so the shipped presets are restated in full with
+#    `review` appended (workspace-write sandbox + ask approval policy: the
+#    reviewer answerer only runs under `ask`).
+# 2. Inserts the reviewer row. `provider`/`model` are intentionally omitted:
+#    the reviewer reuses the session's logged main-conversation route
+#    (request/header). Pin an explicit route in your profile's own
+#    cordis.patch.yml when the deployment needs one, e.g.:
+#
+#    - id: permission-review
+#      name: deepseek-autoreview
+#      config:
+#        provider: deepseek-official
+#        model: deepseek-v4-flash
+- id: permission
+  name: '@deepseek-ai/dsh-permission-presets'
+  config:
+    presets:
+      read-only:
+        sandbox: read-only
+        approval: ask
+      workspace-write:
+        sandbox: workspace-write
+        approval: ask
+      danger-full-access:
+        sandbox: danger-full-access
+        approval: never
+      review:
+        sandbox: workspace-write
+        approval: ask
+        name: 替我审核
+        description: 工作区内自动执行；越界/提权请求由审核模型裁决，安全则自动批准，否则转人工。
+- insert:
+    - id: permission-review
+      name: deepseek-autoreview
+      config:
+        presets:
+          - review

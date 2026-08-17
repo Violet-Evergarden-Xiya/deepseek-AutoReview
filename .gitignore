@@ -1,0 +1,5 @@
+node_modules/
+*.tsbuildinfo
+lib/types/*.js
+lib/types/*.js.map
+.pnpm-store/
