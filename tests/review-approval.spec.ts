@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
-import { CallId, LlmAdapter, LlmRuntime, createUserMessage } from '@deepseek-ai/dsh-llm'
-import type { GenerateOptions, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
+import { CallId, LlmAdapter, LlmRuntime, ReasoningEffortId, createUserMessage } from '@deepseek-ai/dsh-llm'
+import type { GenerateOptions, LlmResolvedModelInfo, StreamChunk, UserMessage } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import ApprovalService from '@deepseek-ai/dsh-user-approval'
 import type { ApprovalOutcome, ApprovalRequest } from '@deepseek-ai/dsh-user-approval'
@@ -32,15 +32,28 @@ const reviewPlugin = { name, inject, Config, apply }
 class FakeAdapter extends LlmAdapter {
   readonly calls: GenerateOptions[] = []
   private readonly responder: (options: GenerateOptions) => AsyncIterable<StreamChunk>
+  private readonly reasoning: boolean
 
-  constructor(responder: (options: GenerateOptions) => AsyncIterable<StreamChunk>) {
+  constructor(responder: (options: GenerateOptions) => AsyncIterable<StreamChunk>, reasoning = true) {
     super()
     this.responder = responder
+    this.reasoning = reasoning
   }
 
   stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.calls.push(options)
     return this.responder(options)
+  }
+
+  resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      ...this.reasoning
+        ? { reasoning: { efforts: [{ id: ReasoningEffortId('off'), name: 'Off' }], defaultEffort: ReasoningEffortId('off') } }
+        : {},
+    })
   }
 }
 
@@ -55,6 +68,15 @@ class QueuedAdapter extends LlmAdapter {
     this.calls.push(options)
     const responder = this.responders[Math.min(this.calls.length - 1, this.responders.length - 1)]
     return responder(options)
+  }
+
+  resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    return Promise.resolve({
+      provider,
+      id: model,
+      name: model,
+      reasoning: { efforts: [{ id: ReasoningEffortId('off'), name: 'Off' }], defaultEffort: ReasoningEffortId('off') },
+    })
   }
 }
 
@@ -496,6 +518,50 @@ describe('review answerer', () => {
 
     await expect(ask(ctx, agent)).resolves.toBe('allowed-once')
     expect(adapter.calls).toHaveLength(2)
+  })
+
+  it('salvages a complete verdict from a max-tokens truncated output', async () => {
+    const truncated = async function* (): AsyncIterable<StreamChunk> {
+      yield { type: 'block-start', index: 0, blockType: 'text' }
+      yield { type: 'text-delta', index: 0, text: '{"decision":"allow","rationale":"与任务目标一致"}' }
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: '{"decision":"allow","rationale":"与任务目标一致"}' } }
+      yield { type: 'finish', reason: { kind: 'max-tokens' } }
+    }
+    const adapter = new FakeAdapter(truncated)
+    const ctx = await mounted({}, adapter)
+    const { agent, appended } = fakeAgent(seed({
+      preset: 'review',
+      tool: { name: 'bash', arguments: { command: 'curl -s https://example.com/x' } },
+    }))
+
+    await expect(ask(ctx, agent)).resolves.toBe('allowed-once')
+    const verdict = appended.find(entry => entry.type === 'review/verdict')
+    expect(verdict?.data).toMatchObject({ decision: 'allow' })
+  })
+
+  it('sets reasoning effort off on judgment calls by default', async () => {
+    const adapter = new FakeAdapter(verdictResponder('allow', 'x'))
+    const ctx = await mounted({}, adapter)
+    const { agent } = fakeAgent(seed({
+      preset: 'review',
+      tool: { name: 'bash', arguments: { command: 'curl -s https://x.example/a' } },
+    }))
+
+    await expect(ask(ctx, agent)).resolves.toBe('allowed-once')
+    expect(String(adapter.calls[0]?.reasoningEffort)).toBe('off')
+  })
+
+  it('falls back without reasoning effort when the route model lacks support', async () => {
+    const adapter = new FakeAdapter(verdictResponder('allow', '无推理支持降级'), false)
+    const ctx = await mounted({}, adapter)
+    const { agent, appended } = fakeAgent(seed({
+      preset: 'review',
+      tool: { name: 'bash', arguments: { command: 'curl -s https://x.example/a' } },
+    }))
+
+    await expect(ask(ctx, agent)).resolves.toBe('allowed-once')
+    const verdict = appended.find(entry => entry.type === 'review/verdict')
+    expect(verdict?.data).toMatchObject({ decision: 'allow', model: 'fake-model' })
   })
 
   it('fails closed when the reviewer stream errors permanently', async () => {

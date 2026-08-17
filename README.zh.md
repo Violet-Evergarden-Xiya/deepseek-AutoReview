@@ -94,7 +94,7 @@ dsh web
 | `presets` | `['review']` | 激活审核者的预设表键。 |
 | `provider` / `model` | 未设置 | 组合级兜底路由，成对提供；低于设置的「指定模型」。 |
 | `maxInputBytes` | `1024` | 判定请求中当前 turn 用户上下文字节上限。 |
-| `maxOutputTokens` | `160` | 判定响应 token 上限。 |
+| `maxOutputTokens` | `256` | 判定响应 token 上限。 |
 | `timeoutMs` | `10000` | 单次判定端到端超时；超时转人工。 |
 | `maxConcurrent` | `4` | 并发判定上限；超限请求直接转人工。 |
 | `whitelist` | `true` | 保守白名单自动放行（仅结构可验证命令，禁止任何 shell 元字符）。 |
@@ -105,6 +105,7 @@ dsh web
 | `deny` | `true` | 允许审核模型输出「直接拒绝」。 |
 | `maxAutoPerMinute` / `maxAutoPerHour` | `5` / `30` | 自动批准速率预算，超限转人工。 |
 | `retryTransient` | `true` | 瞬时错误（限流/网络）重试一次，超时与非法输出不重试。 |
+| `reasoningEffort` | `off` | 判定调用推理强度（`off` 关闭推理省 token，模型不支持时自动降级）。 |
 | `rubric` | 内置 | 审核者系统提示词整体覆盖。 |
 
 ## 工作原理

@@ -73,6 +73,8 @@ export interface Config {
     maxAutoPerHour?: number;
     /** Retry transient transport failures (rate limits, network) once. */
     retryTransient?: boolean;
+    /** Reasoning effort of the judgment call: `off` skips reasoning entirely. */
+    reasoningEffort?: 'off' | 'high' | 'max';
     /** Replacement reviewer system prompt; the default rubric when omitted. */
     rubric?: string;
 }
@@ -96,6 +98,7 @@ export interface ResolvedConfig {
     maxAutoPerMinute: number;
     maxAutoPerHour: number;
     retryTransient: boolean;
+    reasoningEffort: 'off' | 'high' | 'max';
     rubric?: string;
 }
 /** Materialize schema defaults into one frozen policy object. */

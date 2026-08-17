@@ -35,6 +35,7 @@ import {
   boundContextSummary,
   createUserMessage,
   deepFreeze,
+  ReasoningEffortId,
 } from '@deepseek-ai/dsh-llm'
 import type { CallId, FinishReason, GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { effectivePermissionPreset } from '@deepseek-ai/dsh-permission-presets'
@@ -100,6 +101,8 @@ export interface Config {
   maxAutoPerHour?: number
   /** Retry transient transport failures (rate limits, network) once. */
   retryTransient?: boolean
+  /** Reasoning effort of the judgment call: `off` skips reasoning entirely. */
+  reasoningEffort?: 'off' | 'high' | 'max'
   /** Replacement reviewer system prompt; the default rubric when omitted. */
   rubric?: string
 }
@@ -110,7 +113,7 @@ export const Config: z<Config> = z.object({
   provider: z.string(),
   model: z.string(),
   maxInputBytes: z.number().step(1).min(256).max(1 << 20).default(1024),
-  maxOutputTokens: z.number().step(1).min(16).max(4096).default(160),
+  maxOutputTokens: z.number().step(1).min(16).max(4096).default(256),
   timeoutMs: z.number().step(1).min(1000).max(120000).default(10000),
   maxConcurrent: z.number().step(1).min(1).max(32).default(4),
   preflight: z.boolean().default(true),
@@ -126,6 +129,7 @@ export const Config: z<Config> = z.object({
   maxAutoPerMinute: z.number().step(1).min(0).max(1000).default(5),
   maxAutoPerHour: z.number().step(1).min(0).max(10000).default(30),
   retryTransient: z.boolean().default(true),
+  reasoningEffort: z.union(['off', 'high', 'max']).default('off'),
   rubric: z.string(),
 })
 
@@ -167,6 +171,7 @@ export interface ResolvedConfig {
   maxAutoPerMinute: number
   maxAutoPerHour: number
   retryTransient: boolean
+  reasoningEffort: 'off' | 'high' | 'max'
   rubric?: string
 }
 
@@ -177,7 +182,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     ...config.provider !== undefined ? { provider: config.provider } : {},
     ...config.model !== undefined ? { model: config.model } : {},
     maxInputBytes: config.maxInputBytes ?? 1024,
-    maxOutputTokens: config.maxOutputTokens ?? 160,
+    maxOutputTokens: config.maxOutputTokens ?? 256,
     timeoutMs: config.timeoutMs ?? 10000,
     maxConcurrent: config.maxConcurrent ?? 4,
     preflight: config.preflight ?? true,
@@ -189,6 +194,7 @@ export function resolveConfig(config: Config): ResolvedConfig {
     maxAutoPerMinute: config.maxAutoPerMinute ?? 5,
     maxAutoPerHour: config.maxAutoPerHour ?? 30,
     retryTransient: config.retryTransient ?? true,
+    reasoningEffort: config.reasoningEffort ?? 'off',
     ...config.rubric !== undefined ? { rubric: config.rubric } : {},
   })
 }
@@ -471,14 +477,17 @@ function isTransient(error: unknown): boolean {
   return error instanceof Error && /ECONNRESET|ETIMEDOUT|ECONNREFUSED|fetch failed|network error|socket hang up/i.test(error.message)
 }
 
+/** Whether the route's model rejected the requested reasoning effort. */
+function isUnsupportedEffort(error: unknown): boolean {
+  return error instanceof Error && /does not support reasoning effort/i.test(error.message)
+}
+
 /** Stream one judgment call to a parsed verdict. */
 async function streamVerdict(ctx: Context, options: GenerateOptions): Promise<ReviewVerdict> {
   const assembler = new BlockAssembler()
   for await (const chunk of ctx.llm.stream(options)) {
     assembler.push(chunk)
   }
-  const failure = finishError(assembler.finish)
-  if (failure !== undefined) throw failure
   const blocks = assembler.blocks()
   if (blocks.some(block => block.type === 'tool-call')) {
     throw new Error('deepseek-autoreview: reviewer requested a tool call')
@@ -487,6 +496,17 @@ async function streamVerdict(ctx: Context, options: GenerateOptions): Promise<Re
     .filter((block): block is Extract<(typeof blocks)[number], { type: 'text' }> => block.type === 'text')
     .map(block => block.text)
     .join(' ')
+  // A truncated output may still carry a complete verdict (reasoning burned
+  // the budget before the JSON); salvage it before failing the ask.
+  if (assembler.finish.kind === 'max-tokens') {
+    try {
+      return parseVerdict(text)
+    } catch {
+      throw new Error('deepseek-autoreview: review output reached maxOutputTokens without a parsable verdict')
+    }
+  }
+  const failure = finishError(assembler.finish)
+  if (failure !== undefined) throw failure
   return parseVerdict(text)
 }
 
@@ -529,7 +549,7 @@ async function judge(
   const signal = req.signal === undefined
     ? timeoutSignal
     : AbortSignal.any([req.signal, timeoutSignal])
-  const options: GenerateOptions = deepFreeze({
+  const baseOptions: GenerateOptions = {
     provider: route.provider,
     model: route.model,
     messages,
@@ -537,12 +557,22 @@ async function judge(
     maxTokens: resolved.maxOutputTokens,
     sessionId: req.agent.session.id,
     signal,
+  }
+  // A verdict task needs no reasoning: `off` keeps the budget for the JSON.
+  let options: GenerateOptions = deepFreeze({
+    ...baseOptions,
+    reasoningEffort: ReasoningEffortId(resolved.reasoningEffort),
   })
   let verdict: ReviewVerdict
   try {
     verdict = await streamVerdict(ctx, options)
   } catch (error) {
-    if (resolved.retryTransient && !signal.aborted && isTransient(error)) {
+    if (!signal.aborted && isUnsupportedEffort(error)) {
+      // The route's model does not advertise the requested effort: retry
+      // without the field and let the provider default apply.
+      options = deepFreeze({ ...baseOptions })
+      verdict = await streamVerdict(ctx, options)
+    } else if (resolved.retryTransient && !signal.aborted && isTransient(error)) {
       verdict = await streamVerdict(ctx, options)
     } else {
       throw error

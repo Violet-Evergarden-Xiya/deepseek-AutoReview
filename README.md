@@ -76,7 +76,7 @@ After install, **Settings → General** gains a「替我审核模型」row, swit
 | `presets` | `['review']` | Preset table keys that activate the reviewer. |
 | `provider` / `model` | unset | Composition-level fallback route, supplied together. |
 | `maxInputBytes` | `1024` | Byte budget for the current-turn user context. |
-| `maxOutputTokens` | `160` | Judgment response token cap. |
+| `maxOutputTokens` | `256` | Judgment response token cap. |
 | `timeoutMs` | `10000` | End-to-end judgment deadline; timeout delegates. |
 | `maxConcurrent` | `4` | In-flight judgment cap; over-capacity asks delegate. |
 | `whitelist` | `true` | Zero-token fast approval for structurally verifiable commands. |
@@ -87,6 +87,7 @@ After install, **Settings → General** gains a「替我审核模型」row, swit
 | `deny` | `true` | Allow the model to decide `deny`. |
 | `maxAutoPerMinute` / `maxAutoPerHour` | `5` / `30` | Auto-approval budget; overflow delegates. |
 | `retryTransient` | `true` | Retry transient failures once (rate limits/network); timeouts and invalid outputs never retry. |
+| `reasoningEffort` | `off` | Judgment reasoning effort (`off` skips reasoning; degrades automatically when unsupported). |
 | `rubric` | built-in | Full replacement for the reviewer system prompt. |
 
 ## How it works
